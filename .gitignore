@@ -1,0 +1,19 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# VS Code local state
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/tasks.json
+
+# Arduino / ESP32 build outputs (if generated in workspace)
+build/
+*.bin
+*.elf
+*.map
+*.hex
+
+# Arduino CLI temporary files
+*.tmp
