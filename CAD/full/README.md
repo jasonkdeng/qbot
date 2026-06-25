@@ -1,1 +1,1 @@
-## This file contains major assemblies builds for the full robot
+## This folder contains major assemblies builds for the full robot
