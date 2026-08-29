@@ -31,11 +31,11 @@ const int KNEE_DIRECTION  = +1;
 
 // Start conservatively.
 // Replace these with your actual calibrated safe limits.
-const float THIGH_SERVO_MIN = 20;
-const float THIGH_SERVO_MAX = 160;
+const float THIGH_SERVO_MIN = -60;
+const float THIGH_SERVO_MAX = 260;
 
-const float KNEE_SERVO_MIN = 20;
-const float KNEE_SERVO_MAX = 160;
+const float KNEE_SERVO_MIN = -60;
+const float KNEE_SERVO_MAX = 260;
 
 
 // ============================================================
@@ -45,6 +45,39 @@ float radToDeg(float radians) {
   return radians * 180.0 / PI;
 }
 
+void traceOval(
+    float centerX,
+    float centerZ,
+    float radiusX,
+    float radiusZ,
+    unsigned long durationMs
+) {
+  const int updatePeriodMs = 20;   // 50 Hz updates
+
+  int steps = max(
+      1,
+      (int)(durationMs / updatePeriodMs)
+  );
+
+  for (int i = 0; i <= steps; i++) {
+
+    float t = (float)i / (float)steps;
+    float theta = 2.0 * PI * t;
+
+    float x =
+        centerX +
+        radiusX * cos(theta);
+
+    float z =
+        centerZ +
+        radiusZ * sin(theta);
+
+    setFootPosition(x, z);
+
+    // Give the servo/controller time before next command
+    delay(updatePeriodMs);
+  }
+}
 
 // ============================================================
 // Send mathematical joint angles to servos
@@ -63,40 +96,40 @@ float radToDeg(float radians) {
 void setJointAngles(float thighAngle, float kneeAngle) {
 
   float thighServoAngle =
-      THIGH_NEUTRAL
-      + THIGH_DIRECTION * thighAngle;
+      THIGH_NEUTRAL +
+      THIGH_DIRECTION * thighAngle;
 
   float kneeServoAngle =
-      KNEE_NEUTRAL
-      + KNEE_DIRECTION * kneeAngle;
+      KNEE_NEUTRAL +
+      KNEE_DIRECTION * kneeAngle;
 
-  thighServoAngle = constrain(
-      thighServoAngle,
-      THIGH_SERVO_MIN,
-      THIGH_SERVO_MAX
-  );
-
-  kneeServoAngle = constrain(
-      kneeServoAngle,
-      KNEE_SERVO_MIN,
-      KNEE_SERVO_MAX
-  );
-
-  thighServo.write(thighServoAngle);
-  kneeServo.write(kneeServoAngle);
-
-  Serial.println();
-  Serial.println("=== Joint Command ===");
-
-  Serial.print("Thigh joint: ");
+  Serial.print("IK thigh: ");
   Serial.print(thighAngle);
-  Serial.print(" deg -> servo ");
-  Serial.println(thighServoAngle);
+  Serial.print(" | Servo thigh: ");
+  Serial.print(thighServoAngle);
 
-  Serial.print("Knee joint: ");
+  Serial.print(" | IK knee: ");
   Serial.print(kneeAngle);
-  Serial.print(" deg -> servo ");
+  Serial.print(" | Servo knee: ");
   Serial.println(kneeServoAngle);
+
+  if (thighServoAngle < THIGH_SERVO_MIN ||
+      thighServoAngle > THIGH_SERVO_MAX ||
+      kneeServoAngle < KNEE_SERVO_MIN ||
+      kneeServoAngle > KNEE_SERVO_MAX) {
+
+    Serial.println("Servo command outside limits");
+    return;
+  }
+
+  int thighPulse =
+      500 + (thighServoAngle / 180.0) * 2000.0;
+
+  int kneePulse =
+      500 + (kneeServoAngle / 180.0) * 2000.0;
+
+  thighServo.writeMicroseconds(thighPulse);
+  kneeServo.writeMicroseconds(kneePulse);
 }
 
 
@@ -193,17 +226,6 @@ void setFootPosition(float x, float z) {
   float thighAngle;
   float kneeAngle;
 
-  Serial.println();
-  Serial.println("============================");
-
-  Serial.print("Target X: ");
-  Serial.print(x);
-  Serial.println(" cm");
-
-  Serial.print("Target Z: ");
-  Serial.print(z);
-  Serial.println(" cm");
-
   if (!inverseKinematics(
         x,
         z,
@@ -213,12 +235,6 @@ void setFootPosition(float x, float z) {
     return;
   }
 
-  Serial.print("IK thigh: ");
-  Serial.println(thighAngle);
-
-  Serial.print("IK knee: ");
-  Serial.println(kneeAngle);
-
   setJointAngles(thighAngle, kneeAngle);
 }
 
@@ -227,9 +243,10 @@ void setFootPosition(float x, float z) {
 // Setup
 // ============================================================
 void setup() {
-
   Serial.begin(115200);
   delay(1500);
+
+  Serial.println("===== NEW THIGH TEST VERSION =====");
 
   hipServo.setPeriodHertz(50);
   thighServo.setPeriodHertz(50);
@@ -239,44 +256,94 @@ void setup() {
   thighServo.attach(THIGH_PIN, 500, 2500);
   kneeServo.attach(KNEE_PIN, 500, 2500);
 
-  // Keep hip centered for now
   hipServo.write(HIP_NEUTRAL);
-
-  // Start in calibrated neutral
   thighServo.write(THIGH_NEUTRAL);
   kneeServo.write(KNEE_NEUTRAL);
-
-  Serial.println("Quadruped leg IK ready.");
-  Serial.println();
-  Serial.println("Coordinate system:");
-  Serial.println("  +X = forward");
-  Serial.println("  +Z = downward");
-  Serial.println();
-  Serial.println("Example:");
-  Serial.println("  setFootPosition(2, 15);");
 }
 
+struct LegWalkState {
+  unsigned long startTime;
+  int step;
+};
 
-// ============================================================
-// Loop
-// ============================================================
+LegWalkState walkState = {
+  0,
+  0
+};
+
+void updateWalk() {
+  unsigned long now = millis();
+
+  switch (walkState.step) {
+
+    case 0:
+      setFootPosition(-4, 14);
+      walkState.startTime = now;
+      walkState.step = 1;
+      break;
+
+    case 1:
+      if (now - walkState.startTime >= 500) {
+        setFootPosition(4, 14);
+
+        walkState.startTime = now;
+        walkState.step = 2;
+      }
+      break;
+
+    case 2:
+      if (now - walkState.startTime >= 100) {
+        setFootPosition(3, 13);
+
+        walkState.startTime = now;
+        walkState.step = 3;
+      }
+      break;
+
+    case 3:
+      if (now - walkState.startTime >= 100) {
+        setFootPosition(0, 12);
+
+        walkState.startTime = now;
+        walkState.step = 4;
+      }
+      break;
+
+    case 4:
+      if (now - walkState.startTime >= 100) {
+        setFootPosition(-3, 13);
+
+        walkState.startTime = now;
+        walkState.step = 5;
+      }
+      break;
+
+    case 5:
+      if (now - walkState.startTime >= 100) {
+        setFootPosition(-4, 14);
+
+        walkState.startTime = now;
+        walkState.step = 1;
+      }
+      break;
+  }
+}
+
 void loop() {
+  updateWalk();
 
-  // Example test.
-  //
-  // Uncomment ONE target at a time while testing.
+  // thighServo.write(86);
+  // delay(1000);
 
-  setFootPosition(0, 16.0);
+  // thighServo.write(100);
+  // delay(1000);
 
-  delay(2000);
+  // thighServo.write(120);
+  // delay(1000);
 
-  setFootPosition(16.0, 0);
+  // thighServo.write(100);
+  // delay(1000);
+  // Serial.println("hi");
 
-  delay(2000);
-
-  setFootPosition(8.0,8.0);
-  delay (2000);
-  
-  setFootPosition(-8.0,8.0);
-  delay (2000);
+  // Other code can run here at the same time.
 }
